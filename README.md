@@ -1,4 +1,4 @@
-# 🍺 Golden Draught
+# 🍺 Golden Draught Brewery Search
 
 Golden Draught is a premium brewery discovery tool that combines real-time API data with AI-powered enrichment. Instead of just providing an address, it uses Google Search and Google Gemini AI to curate professional descriptions, food availability, and specific beer statistics for breweries in any given city.
 
