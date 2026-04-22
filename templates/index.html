@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Golden Draught | Premium Brewery AI</title>
+    <style>
+        /* BRAND COLORS */
+        :root {
+            --bg-app: #091421;
+            --bg-card: #121c2a;
+            --bg-card-low: #16202e;
+            --text-main: #d9e3f6;
+            --text-sub: #d3c5ac;
+            --text-muted: #9b8f79;
+            --accent: #ffd165;
+            --accent-green: #4ae176;
+            --input-bg: #0d1928;
+            --input-text: #d9e3f6;
+            --border-gold: rgba(255, 209, 101, 0.40);
+            --border-focus: rgba(255, 209, 101, 0.80);
+        }
+
+        body {
+            margin: 0;
+            padding: 20px 15px;
+            font-family: "Source Sans", "Inter", sans-serif;
+            background-color: var(--bg-app);
+            color: var(--text-main);
+            display: flex;
+            justify-content: center;
+            -webkit-font-smoothing: antialiased;
+            line-height: 1.6;
+            font-size: 12px; 
+        }
+
+        .container {
+            width: 100%;
+            max-width: 800px;
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
+        }
+
+        /* 1. TITLE */
+        h1 {
+            font-size: 12px; 
+            color: var(--accent);
+            text-transform: uppercase;
+            letter-spacing: 4px;
+            margin: 0 0 20px 0;
+            font-weight: 800;
+            background: linear-gradient(to bottom, #fff, var(--accent));
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        /* 2. IMAGE */
+        .hero-image {
+            display: block;          /* Forces the image to be a block element */
+            margin: 0 auto 20px auto; /* Centers the block horizontally (auto) and keeps 20px bottom margin */
+            width: 100px; 
+            height: 100px;
+            object-fit: cover;
+            border-radius: 50%;
+            border: 2px solid var(--accent);
+            box-shadow: 0 0 20px rgba(255, 209, 101, 0.2);
+        }
+
+        /* 3. SUBTITLE */
+        .subtitle {
+            color: var(--text-sub);
+            font-size: 12px;
+            margin-bottom: 30px;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            font-weight: 400;
+        }
+
+        /* 4. SEARCH BOX */
+        .search-box {
+            display: flex;
+            gap: 0;
+            margin-bottom: 40px;
+            border-radius: 8px;
+            overflow: hidden;
+            border: 1px solid var(--border-gold);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            width: 100%;
+        }
+
+        input {
+            flex: 1;
+            padding: 12px;
+            border: none;
+            background: var(--input-bg);
+            color: var(--input-text);
+            font-size: 12px;
+            outline: none;
+            min-width: 0;
+        }
+
+        button {
+            padding: 12px 20px;
+            border: none;
+            background: var(--accent);
+            color: #000;
+            font-weight: 700;
+            cursor: pointer;
+            font-size: 12px;
+            text-transform: uppercase;
+            transition: all 0.3s ease;
+            white-space: nowrap;
+        }
+
+        /* RESULTS SECTION */
+        .brewery-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-gold);
+            border-radius: 15px;
+            margin-bottom: 25px;
+            padding: 20px;
+            text-align: left;
+            box-shadow: 
+                inset 0 1px 1px rgba(255,255,255,0.05), 
+                0 10px 20px rgba(0,0,0,0.6);
+            animation: fadeIn 0.6s ease-out;
+            width: 100%;
+            box-sizing: border-box;
+        }
+
+        .brewery-header {
+            text-align: center;
+            border-bottom: 1px solid var(--border-gold);
+            margin-bottom: 15px;
+            padding-bottom: 15px;
+        }
+
+        .brewery-name {
+            font-size: 12px;
+            color: var(--accent);
+            margin: 0;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .brewery-address {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-top: 5px;
+            font-style: italic;
+        }
+
+        .info-text {
+            line-height: 1.6;
+            margin-bottom: 15px;
+            color: var(--text-main);
+            font-size: 12px;
+        }
+
+        .food-badge {
+            display: inline-block;
+            background: var(--bg-card-low);
+            color: var(--accent);
+            padding: 5px 12px;
+            border-radius: 50px;
+            font-size: 12px;
+            border: 1px solid var(--border-gold);
+            margin-bottom: 20px;
+            font-weight: 600;
+        }
+
+        .table-container {
+            width: 100%;
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+            border-radius: 8px;
+            border: 1px solid var(--border-gold);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background: var(--bg-app);
+            min-width: 300px;
+        }
+
+        th {
+            background: var(--bg-card-low);
+            color: var(--accent);
+            text-align: left;
+            padding: 10px;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        td {
+            padding: 10px;
+            border-bottom: 1px solid var(--bg-card-low);
+            color: var(--text-main);
+            font-size: 12px;
+        }
+
+        /* FOOTER STYLES */
+        footer {
+            margin-top: auto; /* Pushes footer to the bottom */
+            padding: 40px 0 20px 0;
+            color: var(--text-muted);
+            font-size: 12px;
+            text-align: center;
+            border-top: 1px solid rgba(255, 209, 101, 0.1);
+            width: 100%;
+        }
+
+        footer a {
+            color: var(--accent);
+            text-decoration: none;
+            font-weight: 600;
+            transition: color 0.3s ease;
+        }
+
+        footer a:hover {
+            color: #fff;
+            text-decoration: underline;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        @media (max-width: 480px) {
+            body { padding: 20px 10px; }
+            .search-box { flex-direction: column; border: none; box-shadow: none; gap: 10px; }
+            input, button { border-radius: 8px !important; border: 1px solid var(--border-gold) !important; width: 100%; box-sizing: border-box; }
+            .brewery-card { padding: 15px; }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>Golden Draught</h1>
+
+        <img src="{{ url_for('static', filename='images/brewery.png') }}" 
+             alt="Golden Draught Logo" 
+             class="hero-image" 
+             onerror="this.style.display='none'">
+        
+        <div class="subtitle">Curated Craft Brewery Intelligence</div>
+        
+        <div class="search-box">
+            <input type="text" id="locationInput" placeholder="Search by city (e.g. Torrance)...">
+            <button onclick="performSearch()">Find Beer</button>
+        </div>
+
+        <div id="loading" style="display:none; color:var(--accent); margin-bottom:20px; font-weight: 600; letter-spacing: 1px; font-size: 12px;">Scanning Premium Database...</div>
+        <div id="results"></div>
+
+        <!-- FOOTNOTE SECTION -->
+        <footer>
+            Data provided by <a href="https://www.openbrewerydb.org/" target="_blank">OpenBreweryDB</a>
+        </footer>
+    </div>
+
+    <script>
+        async function performSearch() {
+            const loc = document.getElementById('locationInput').value;
+            if (!loc) return alert("Please enter a location");
+
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('results').innerHTML = '';
+
+            try {
+                const response = await fetch(`/search_brewery?location=${encodeURIComponent(loc)}`);
+                const data = await response.json();
+
+                if (!data.results || data.results.length === 0) {
+                    document.getElementById('results').innerHTML = '<p style="color:var(--text-muted); font-size:12px;">No premium breweries found in this area.</p>';
+                } else {
+                    data.results.forEach(b => {
+                        const card = document.createElement('div');
+                        card.className = 'brewery-card';
+                        
+                        let beerContent = '';
+                        if (b.beers && b.beers.length > 0) {
+                            let beerRows = b.beers.map(beer => 
+                                `<tr><td>${beer.name}</td><td>${beer.abv}</td><td>${beer.ibu}</td></tr>`
+                            ).join('');
+                            
+                            beerContent = `
+                                <div class="table-container">
+                                    <table>
+                                        <thead>
+                                            <tr><th>Selection</th><th>ABV</th><th>IBU</th></tr>
+                                        </thead>
+                                        <tbody>${beerRows}</tbody>
+                                    </table>
+                                </div>`;
+                        } else {
+                            beerContent = `<p style="text-align:center; color:var(--text-muted); font-style:italic; margin-top:15px; font-size:12px;">Beer list currently unavailable.</p>`;
+                        }
+
+                        card.innerHTML = `
+                            <div class="brewery-header">
+                                <div class="brewery-name">${b.name}</div>
+                                <div class="brewery-address">${b.address}</div>
+                            </div>
+                            <div class="info-text">${b.description}</div>
+                            <div class="food-badge">🍔 Gastronomy: ${b.food}</div>
+                            ${beerContent}
+                        `;
+                        document.getElementById('results').appendChild(card);
+                    });
+                }
+            } catch (err) {
+                alert("Connection error. Please try again.");
+            } finally {
+                document.getElementById('loading').style.display = 'none';
+            }
+        }
+    </script>
+</body>
+</html>
