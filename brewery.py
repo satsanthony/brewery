@@ -3,9 +3,14 @@ import traceback
 import logging
 import os
 import json
+import csv
+import io
+import hashlib
 import requests
 from dotenv import load_dotenv
 from flask import Flask, request, jsonify, render_template
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
 import google.generativeai as genai
 
@@ -14,6 +19,8 @@ load_dotenv()
 GEMINI_API_KEY           = os.getenv("GEMINI_API_KEY")
 GOOGLE_CSE_API_KEY       = os.getenv("GOOGLE_CSE_API_KEY")
 GOOGLE_CSE_CX            = os.getenv("GOOGLE_CSE_CX")
+DATABASE_URL             = os.getenv("DATABASE_URL")
+BREWERY_CSV_PATH         = os.path.join(os.path.dirname(__file__), "brewery.csv")
 
 app = Flask(__name__)
 
@@ -24,6 +31,124 @@ logger = logging.getLogger(__name__)
 # Configure Gemini
 genai.configure(api_key=GEMINI_API_KEY)
 SELECTED_MODEL = 'gemini-3.1-flash-lite-preview'
+
+# ── PostgreSQL helpers ────────────────────────────────────────────────────────
+
+def get_db_connection():
+    if not DATABASE_URL:
+        return None
+    try:
+        return psycopg2.connect(DATABASE_URL)
+    except Exception as e:
+        logger.error(f"DB connect error: {e}")
+        return None
+
+def init_db():
+    conn = get_db_connection()
+    if not conn:
+        return
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS brewery_info (
+                id    SERIAL PRIMARY KEY,
+                name  TEXT NOT NULL,
+                city  TEXT NOT NULL,
+                state TEXT NOT NULL,
+                notes TEXT
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS csv_meta (
+                key   VARCHAR(100) PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+        """)
+        conn.commit()
+        cur.close()
+        logger.info("DB tables ready")
+    except Exception as e:
+        logger.error(f"init_db error: {e}")
+    finally:
+        conn.close()
+
+def sync_brewery_csv():
+    """Load brewery.csv from local file and re-populate brewery_info only when changed."""
+    conn = get_db_connection()
+    if not conn:
+        return
+    try:
+        if not os.path.exists(BREWERY_CSV_PATH):
+            logger.warning(f"brewery.csv not found at {BREWERY_CSV_PATH}")
+            return
+
+        with open(BREWERY_CSV_PATH, 'r', encoding='utf-8') as f:
+            content = f.read()
+        new_hash = hashlib.md5(content.encode("utf-8")).hexdigest()
+
+        cur = conn.cursor()
+        cur.execute("SELECT value FROM csv_meta WHERE key = 'brewery_csv_hash'")
+        row = cur.fetchone()
+        if row and row[0] == new_hash:
+            logger.info("Brewery CSV unchanged — skipping sync")
+            cur.close()
+            return
+
+        reader = csv.DictReader(io.StringIO(content))
+        rows   = [r for r in reader if r.get("Name of Brewery", "").strip()]
+
+        cur.execute("DELETE FROM brewery_info")
+        for r in rows:
+            cur.execute(
+                "INSERT INTO brewery_info (name, city, state, notes) VALUES (%s, %s, %s, %s)",
+                (r.get("Name of Brewery", "").strip(),
+                 r.get("City", "").strip(),
+                 r.get("State", "").strip(),
+                 r.get("My notes", "").strip()),
+            )
+        cur.execute("""
+            INSERT INTO csv_meta (key, value) VALUES ('brewery_csv_hash', %s)
+            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+        """, (new_hash,))
+        conn.commit()
+        cur.close()
+        logger.info(f"Brewery CSV synced: {len(rows)} rows")
+    except Exception as e:
+        logger.error(f"sync_brewery_csv error: {e}")
+    finally:
+        conn.close()
+
+def get_visitor_notes(api_name: str, city: str, state: str) -> str:
+    """
+    Return the notes for a brewery if name + city + state match a brewery_info row.
+    Name matching is case-insensitive and checks whether one name contains the other,
+    handling minor differences between the CSV and OpenBreweryDB naming.
+    """
+    conn = get_db_connection()
+    if not conn:
+        return ""
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(
+            "SELECT name, notes FROM brewery_info WHERE LOWER(city)=%s AND LOWER(state)=%s",
+            (city.strip().lower(), state.strip().lower()),
+        )
+        candidates = cur.fetchall()
+        api_lower  = api_name.lower().strip()
+        for row in candidates:
+            db_lower = row["name"].lower().strip()
+            if db_lower in api_lower or api_lower in db_lower:
+                return row["notes"] or ""
+        return ""
+    except Exception as e:
+        logger.error(f"get_visitor_notes error: {e}")
+        return ""
+    finally:
+        conn.close()
+
+# ── Startup ───────────────────────────────────────────────────────────────────
+init_db()
+sync_brewery_csv()
 
 def search_open_brewery_db(location):
     try:
@@ -96,7 +221,8 @@ def search_brewery():
                     "address": f"{b.get('street', 'Address not listed')}, {b.get('city', '')}, {b.get('state', '')}",
                     "description": ai_data.get('description', 'No description available.'),
                     "food": ai_data.get('food_info', 'No food information available.'),
-                    "beers": ai_data.get('top_beers', [])
+                    "beers": ai_data.get('top_beers', []),
+                    "visitor_notes": get_visitor_notes(b['name'], b.get('city', ''), b.get('state', '')),
                 })
 
         return jsonify({"results": final_results})

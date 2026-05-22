@@ -233,6 +233,45 @@
             to { opacity: 1; transform: translateY(0); }
         }
 
+        /* VISITOR OPINION BEVEL CARD */
+        .visitor-opinion-card {
+            position: relative;
+            background: #1a2535;
+            border-radius: 12px;
+            padding: 16px 18px;
+            margin-top: 18px;
+            border: 1px solid rgba(255, 209, 101, 0.22);
+            box-shadow:
+                inset 0 1px 0 rgba(255, 255, 255, 0.06),
+                4px 4px 0 rgba(0, 0, 0, 0.35),
+                0 2px 14px rgba(0, 0, 0, 0.4);
+        }
+        .visitor-opinion-card::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 2px;
+            border-radius: 12px 12px 0 0;
+            background: linear-gradient(90deg, #ffd165 0%, rgba(255, 209, 101, 0.15) 100%);
+        }
+        .visitor-opinion-title {
+            font-size: 10px;
+            font-weight: 700;
+            color: var(--accent);
+            text-transform: uppercase;
+            letter-spacing: 0.14em;
+            margin-bottom: 10px;
+        }
+        .visitor-opinion-text {
+            color: var(--text-sub);
+            font-size: 12px;
+            line-height: 1.7;
+        }
+        .visitor-opinion-text a {
+            color: var(--accent);
+            text-decoration: underline;
+        }
+
         @media (max-width: 480px) {
             body { padding: 20px 10px; }
             .search-box { flex-direction: column; border: none; box-shadow: none; gap: 10px; }
@@ -268,6 +307,11 @@
     </div>
 
     <script>
+        function linkifyText(text) {
+            const urlPattern = /(https?:\/\/[^\s<>"']+)/g;
+            return text.replace(urlPattern, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>');
+        }
+
         async function performSearch() {
             const loc = document.getElementById('locationInput').value;
             if (!loc) return alert("Please enter a location");
@@ -285,13 +329,13 @@
                     data.results.forEach(b => {
                         const card = document.createElement('div');
                         card.className = 'brewery-card';
-                        
+
                         let beerContent = '';
                         if (b.beers && b.beers.length > 0) {
-                            let beerRows = b.beers.map(beer => 
+                            let beerRows = b.beers.map(beer =>
                                 `<tr><td>${beer.name}</td><td>${beer.abv}</td><td>${beer.ibu}</td></tr>`
                             ).join('');
-                            
+
                             beerContent = `
                                 <div class="table-container">
                                     <table>
@@ -305,6 +349,12 @@
                             beerContent = `<p style="text-align:center; color:var(--text-muted); font-style:italic; margin-top:15px; font-size:12px;">Beer list currently unavailable.</p>`;
                         }
 
+                        const visitorBlock = b.visitor_notes ? `
+                            <div class="visitor-opinion-card">
+                                <div class="visitor-opinion-title">A Visitor's Opinion</div>
+                                <div class="visitor-opinion-text">${linkifyText(b.visitor_notes)}</div>
+                            </div>` : '';
+
                         card.innerHTML = `
                             <div class="brewery-header">
                                 <div class="brewery-name">${b.name}</div>
@@ -313,6 +363,7 @@
                             <div class="info-text">${b.description}</div>
                             <div class="food-badge">🍔 Gastronomy: ${b.food}</div>
                             ${beerContent}
+                            ${visitorBlock}
                         `;
                         document.getElementById('results').appendChild(card);
                     });
