@@ -1,4 +1,3 @@
-import sys
 import traceback
 import logging
 import os
@@ -31,6 +30,10 @@ logger = logging.getLogger(__name__)
 # Configure Gemini
 genai.configure(api_key=GEMINI_API_KEY)
 SELECTED_MODEL = 'gemini-3.1-flash-lite-preview'
+
+# In-memory cache for CSV brewery data
+_brewery_csv_cache = {}
+_csv_cache_hash = None
 
 # ── PostgreSQL helpers ────────────────────────────────────────────────────────
 
@@ -123,28 +126,73 @@ def get_visitor_notes(api_name: str, city: str, state: str) -> str:
     Return the notes for a brewery if name + city + state match a brewery_info row.
     Name matching is case-insensitive and checks whether one name contains the other,
     handling minor differences between the CSV and OpenBreweryDB naming.
+    Fallback to CSV file if database is not available.
     """
     conn = get_db_connection()
-    if not conn:
-        return ""
+    if conn:
+        try:
+            cur = conn.cursor(cursor_factory=RealDictCursor)
+            cur.execute(
+                "SELECT name, notes FROM brewery_info WHERE LOWER(city)=%s AND LOWER(state)=%s",
+                (city.strip().lower(), state.strip().lower()),
+            )
+            candidates = cur.fetchall()
+            api_lower  = api_name.lower().strip()
+            for row in candidates:
+                db_lower = row["name"].lower().strip()
+                if db_lower in api_lower or api_lower in db_lower:
+                    return row["notes"] or ""
+            cur.close()
+            return ""
+        except Exception as e:
+            logger.error(f"get_visitor_notes DB error: {e}")
+        finally:
+            conn.close()
+
+    return get_visitor_notes_from_csv(api_name, city, state)
+
+def get_visitor_notes_from_csv(api_name: str, city: str, state: str) -> str:
+    """Fallback method to read visitor notes directly from CSV file."""
+    global _brewery_csv_cache, _csv_cache_hash
+
     try:
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute(
-            "SELECT name, notes FROM brewery_info WHERE LOWER(city)=%s AND LOWER(state)=%s",
-            (city.strip().lower(), state.strip().lower()),
-        )
-        candidates = cur.fetchall()
-        api_lower  = api_name.lower().strip()
-        for row in candidates:
-            db_lower = row["name"].lower().strip()
-            if db_lower in api_lower or api_lower in db_lower:
-                return row["notes"] or ""
+        if not os.path.exists(BREWERY_CSV_PATH):
+            return ""
+
+        try:
+            with open(BREWERY_CSV_PATH, 'r', encoding='utf-8') as f:
+                content = f.read()
+        except UnicodeDecodeError:
+            with open(BREWERY_CSV_PATH, 'r', encoding='latin-1') as f:
+                content = f.read()
+
+        file_hash = hashlib.md5(content.encode("utf-8")).hexdigest()
+        if file_hash != _csv_cache_hash:
+            _brewery_csv_cache.clear()
+            reader = csv.DictReader(io.StringIO(content))
+            for row in reader:
+                row_city = row.get("City", "").strip().lower()
+                row_state = row.get("State", "").strip().lower()
+                key = f"{row_city}|{row_state}"
+                if key not in _brewery_csv_cache:
+                    _brewery_csv_cache[key] = []
+                _brewery_csv_cache[key].append(row)
+            _csv_cache_hash = file_hash
+
+        api_lower = api_name.lower().strip()
+        city_lower = city.strip().lower()
+        state_lower = state.strip().lower()
+        key = f"{city_lower}|{state_lower}"
+
+        for row in _brewery_csv_cache.get(key, []):
+            db_name = row.get("Name of Brewery", "").strip()
+            if db_name.lower() in api_lower or api_lower in db_name.lower():
+                return row.get("My notes", "").strip()
+
         return ""
     except Exception as e:
-        logger.error(f"get_visitor_notes error: {e}")
+        logger.error(f"get_visitor_notes_from_csv error: {e}")
         return ""
-    finally:
-        conn.close()
 
 # ── Startup ───────────────────────────────────────────────────────────────────
 init_db()
