@@ -79,15 +79,21 @@ def sync_brewery_csv():
     """Load brewery.csv from local file and re-populate brewery_info only when changed."""
     conn = get_db_connection()
     if not conn:
+        logger.info("Database not available - skipping CSV sync")
         return
     try:
         if not os.path.exists(BREWERY_CSV_PATH):
             logger.warning(f"brewery.csv not found at {BREWERY_CSV_PATH}")
             return
 
-        with open(BREWERY_CSV_PATH, 'r', encoding='utf-8') as f:
-            content = f.read()
-        new_hash = hashlib.md5(content.encode("utf-8")).hexdigest()
+        try:
+            with open(BREWERY_CSV_PATH, 'r', encoding='utf-8') as f:
+                content = f.read()
+        except UnicodeDecodeError:
+            with open(BREWERY_CSV_PATH, 'r', encoding='latin-1') as f:
+                content = f.read()
+
+        new_hash = hashlib.md5(content.encode("utf-8").replace(b'\x97', b'-')).hexdigest()
 
         cur = conn.cursor()
         cur.execute("SELECT value FROM csv_meta WHERE key = 'brewery_csv_hash'")
@@ -118,6 +124,8 @@ def sync_brewery_csv():
         logger.info(f"Brewery CSV synced: {len(rows)} rows")
     except Exception as e:
         logger.error(f"sync_brewery_csv error: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
     finally:
         conn.close()
 
@@ -277,6 +285,43 @@ def search_brewery():
     except Exception:
         logger.error(traceback.format_exc())
         return jsonify({"error": "Internal Server Error"}), 500
+
+@app.route('/sync_csv', methods=['POST'])
+def sync_csv():
+    """Manual endpoint to trigger CSV sync to database."""
+    try:
+        sync_brewery_csv()
+        return jsonify({"status": "CSV sync completed"}), 200
+    except Exception as e:
+        logger.error(f"Sync endpoint error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/db_status', methods=['GET'])
+def db_status():
+    """Check database connection status."""
+    conn = get_db_connection()
+    if conn:
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT COUNT(*) FROM brewery_info")
+            count = cur.fetchone()[0]
+            cur.close()
+            return jsonify({
+                "status": "connected",
+                "brewery_count": count
+            }), 200
+        except Exception as e:
+            return jsonify({
+                "status": "error",
+                "message": str(e)
+            }), 500
+        finally:
+            conn.close()
+    else:
+        return jsonify({
+            "status": "not_connected",
+            "message": "DATABASE_URL not configured"
+        }), 503
 
 if __name__ == '__main__':
     # host='0.0.0.0' tells Flask to listen on all public IPs on your network
