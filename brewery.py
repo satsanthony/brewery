@@ -351,6 +351,55 @@ def db_status():
             "message": "DATABASE_URL not configured"
         }), 503
 
+@app.route('/debug_visitor_notes', methods=['GET'])
+def debug_visitor_notes():
+    """Debug endpoint to check visitor notes retrieval."""
+    brewery_name = request.args.get('name', 'Mammoth Brewing Company')
+    city = request.args.get('city', 'Mammoth Lakes')
+    state = request.args.get('state', 'California')
+
+    notes = get_visitor_notes(brewery_name, city, state)
+
+    return jsonify({
+        "brewery_name": brewery_name,
+        "city": city,
+        "state": state,
+        "visitor_notes": notes,
+        "has_notes": bool(notes and len(notes.strip()) > 0)
+    }), 200
+
+@app.route('/debug_breweries', methods=['GET'])
+def debug_breweries():
+    """Debug endpoint to show all breweries in database."""
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({"error": "Database not connected"}), 503
+
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT id, name, city, state, LENGTH(notes) as notes_length FROM brewery_info ORDER BY city, name")
+        breweries = cur.fetchall()
+        cur.close()
+
+        result = []
+        for id, name, city, state, notes_len in breweries:
+            result.append({
+                "id": id,
+                "name": name,
+                "city": city,
+                "state": state,
+                "notes_length": notes_len
+            })
+
+        return jsonify({
+            "total_breweries": len(result),
+            "breweries": result
+        }), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        conn.close()
+
 if __name__ == '__main__':
     # host='0.0.0.0' tells Flask to listen on all public IPs on your network
     # use_reloader=False prevents environment variable issues with debug reloading
