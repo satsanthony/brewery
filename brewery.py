@@ -47,11 +47,16 @@ def get_db_connection():
         return None
 
 def init_db():
+    """Initialize database tables on startup."""
     conn = get_db_connection()
     if not conn:
-        return
+        logger.warning("Cannot initialize database - no connection available")
+        return False
+
     try:
         cur = conn.cursor()
+
+        # Create brewery_info table
         cur.execute("""
             CREATE TABLE IF NOT EXISTS brewery_info (
                 id    SERIAL PRIMARY KEY,
@@ -61,17 +66,28 @@ def init_db():
                 notes TEXT
             )
         """)
+        logger.info("brewery_info table created/verified")
+
+        # Create csv_meta table
         cur.execute("""
             CREATE TABLE IF NOT EXISTS csv_meta (
                 key   VARCHAR(100) PRIMARY KEY,
                 value TEXT NOT NULL
             )
         """)
+        logger.info("csv_meta table created/verified")
+
         conn.commit()
         cur.close()
-        logger.info("DB tables ready")
+        logger.info("[SUCCESS] Database tables ready")
+        return True
+
     except Exception as e:
-        logger.error(f"init_db error: {e}")
+        logger.error(f"[ERROR] init_db failed: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        conn.rollback()
+        return False
     finally:
         conn.close()
 
@@ -79,34 +95,47 @@ def sync_brewery_csv():
     """Load brewery.csv from local file and re-populate brewery_info only when changed."""
     conn = get_db_connection()
     if not conn:
-        logger.info("Database not available - skipping CSV sync")
-        return
+        logger.warning("Database not available - CSV sync skipped")
+        return False
+
     try:
         if not os.path.exists(BREWERY_CSV_PATH):
-            logger.warning(f"brewery.csv not found at {BREWERY_CSV_PATH}")
-            return
+            logger.error(f"brewery.csv not found at {BREWERY_CSV_PATH}")
+            return False
 
+        # Read CSV file with encoding fallback
         try:
             with open(BREWERY_CSV_PATH, 'r', encoding='utf-8') as f:
                 content = f.read()
         except UnicodeDecodeError:
+            logger.info("UTF-8 decode failed, trying Latin-1")
             with open(BREWERY_CSV_PATH, 'r', encoding='latin-1') as f:
                 content = f.read()
 
+        logger.info(f"CSV file loaded: {len(content)} bytes")
+
+        # Calculate hash for change detection
         new_hash = hashlib.md5(content.encode("utf-8").replace(b'\x97', b'-')).hexdigest()
 
+        # Check if CSV has changed
         cur = conn.cursor()
         cur.execute("SELECT value FROM csv_meta WHERE key = 'brewery_csv_hash'")
         row = cur.fetchone()
+
         if row and row[0] == new_hash:
-            logger.info("Brewery CSV unchanged — skipping sync")
+            logger.info("CSV unchanged - skipping sync")
             cur.close()
-            return
+            return True
 
+        # Parse CSV
         reader = csv.DictReader(io.StringIO(content))
-        rows   = [r for r in reader if r.get("Name of Brewery", "").strip()]
+        rows = [r for r in reader if r.get("Name of Brewery", "").strip()]
+        logger.info(f"CSV has {len(rows)} brewery entries")
 
+        # Clear and reload
         cur.execute("DELETE FROM brewery_info")
+        logger.info("Cleared brewery_info table")
+
         for r in rows:
             cur.execute(
                 "INSERT INTO brewery_info (name, city, state, notes) VALUES (%s, %s, %s, %s)",
@@ -115,17 +144,24 @@ def sync_brewery_csv():
                  r.get("State", "").strip(),
                  r.get("My notes", "").strip()),
             )
+
+        # Update hash
         cur.execute("""
             INSERT INTO csv_meta (key, value) VALUES ('brewery_csv_hash', %s)
             ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
         """, (new_hash,))
+
         conn.commit()
         cur.close()
-        logger.info(f"Brewery CSV synced: {len(rows)} rows")
+        logger.info(f"[SUCCESS] CSV synced: {len(rows)} breweries loaded")
+        return True
+
     except Exception as e:
-        logger.error(f"sync_brewery_csv error: {e}")
+        logger.error(f"[ERROR] CSV sync failed: {e}")
         import traceback
         logger.error(traceback.format_exc())
+        conn.rollback()
+        return False
     finally:
         conn.close()
 
