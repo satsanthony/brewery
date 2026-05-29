@@ -400,6 +400,24 @@ def debug_breweries():
     finally:
         conn.close()
 
+@app.route('/debug_env', methods=['GET'])
+def debug_env():
+    """Debug endpoint to check environment variables."""
+    db_url = os.getenv("DATABASE_URL")
+    db_public = os.getenv("DATABASE_PUBLIC_URL")
+    gemini_key = os.getenv("GEMINI_API_KEY")
+
+    return jsonify({
+        "DATABASE_URL": "SET" if db_url else "NOT SET",
+        "DATABASE_PUBLIC_URL": "SET" if db_public else "NOT SET",
+        "GEMINI_API_KEY": "SET" if gemini_key else "NOT SET",
+        "environment_variables_found": {
+            "DATABASE_URL": bool(db_url),
+            "DATABASE_PUBLIC_URL": bool(db_public),
+            "GEMINI_API_KEY": bool(gemini_key)
+        }
+    }), 200
+
 if __name__ == '__main__':
     # host='0.0.0.0' tells Flask to listen on all public IPs on your network
     # use_reloader=False prevents environment variable issues with debug reloading
