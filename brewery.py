@@ -325,4 +325,5 @@ def db_status():
 
 if __name__ == '__main__':
     # host='0.0.0.0' tells Flask to listen on all public IPs on your network
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    # use_reloader=False prevents environment variable issues with debug reloading
+    app.run(host='0.0.0.0', port=5000, debug=True, use_reloader=False)
