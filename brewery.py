@@ -134,15 +134,43 @@ def get_visitor_notes(api_name: str, city: str, state: str) -> str:
     Return the notes for a brewery if name + city + state match a brewery_info row.
     Name matching is case-insensitive and checks whether one name contains the other,
     handling minor differences between the CSV and OpenBreweryDB naming.
+    State matching handles both full names (California) and abbreviations (CA).
     Fallback to CSV file if database is not available.
     """
+    # Map full state names to abbreviations
+    state_abbrev_map = {
+        'alabama': 'al', 'alaska': 'ak', 'arizona': 'az', 'arkansas': 'ar',
+        'california': 'ca', 'colorado': 'co', 'connecticut': 'ct', 'delaware': 'de',
+        'florida': 'fl', 'georgia': 'ga', 'hawaii': 'hi', 'idaho': 'id',
+        'illinois': 'il', 'indiana': 'in', 'iowa': 'ia', 'kansas': 'ks',
+        'kentucky': 'ky', 'louisiana': 'la', 'maine': 'me', 'maryland': 'md',
+        'massachusetts': 'ma', 'michigan': 'mi', 'minnesota': 'mn', 'mississippi': 'ms',
+        'missouri': 'mo', 'montana': 'mt', 'nebraska': 'ne', 'nevada': 'nv',
+        'new hampshire': 'nh', 'new jersey': 'nj', 'new mexico': 'nm', 'new york': 'ny',
+        'north carolina': 'nc', 'north dakota': 'nd', 'ohio': 'oh', 'oklahoma': 'ok',
+        'oregon': 'or', 'pennsylvania': 'pa', 'rhode island': 'ri', 'south carolina': 'sc',
+        'south dakota': 'sd', 'tennessee': 'tn', 'texas': 'tx', 'utah': 'ut',
+        'vermont': 'vt', 'virginia': 'va', 'washington': 'wa', 'west virginia': 'wv',
+        'wisconsin': 'wi', 'wyoming': 'wy'
+    }
+
+    # Normalize state to 2-letter abbreviation
+    state_lower = state.strip().lower()
+    if state_lower in state_abbrev_map:
+        state_normalized = state_abbrev_map[state_lower]
+    else:
+        state_normalized = state_lower
+
     conn = get_db_connection()
     if conn:
         try:
             cur = conn.cursor(cursor_factory=RealDictCursor)
-            cur.execute(
-                "SELECT name, notes FROM brewery_info WHERE LOWER(city)=%s AND LOWER(state)=%s",
-                (city.strip().lower(), state.strip().lower()),
+            # Query with both exact match and abbreviation match
+            cur.execute("""
+                SELECT name, notes FROM brewery_info
+                WHERE LOWER(city)=%s AND (LOWER(state)=%s OR LOWER(state)=%s)
+            """,
+                (city.strip().lower(), state_normalized, state_lower),
             )
             candidates = cur.fetchall()
             api_lower  = api_name.lower().strip()
