@@ -35,6 +35,25 @@ SELECTED_MODEL = 'gemini-3.1-flash-lite-preview'
 _brewery_csv_cache = {}
 _csv_cache_hash = None
 
+# Map full US state names to their 2-letter abbreviations (and the reverse), used both
+# for matching CSV visitor notes and for building OpenBreweryDB `by_state` queries.
+STATE_ABBREV_MAP = {
+    'alabama': 'al', 'alaska': 'ak', 'arizona': 'az', 'arkansas': 'ar',
+    'california': 'ca', 'colorado': 'co', 'connecticut': 'ct', 'delaware': 'de',
+    'florida': 'fl', 'georgia': 'ga', 'hawaii': 'hi', 'idaho': 'id',
+    'illinois': 'il', 'indiana': 'in', 'iowa': 'ia', 'kansas': 'ks',
+    'kentucky': 'ky', 'louisiana': 'la', 'maine': 'me', 'maryland': 'md',
+    'massachusetts': 'ma', 'michigan': 'mi', 'minnesota': 'mn', 'mississippi': 'ms',
+    'missouri': 'mo', 'montana': 'mt', 'nebraska': 'ne', 'nevada': 'nv',
+    'new hampshire': 'nh', 'new jersey': 'nj', 'new mexico': 'nm', 'new york': 'ny',
+    'north carolina': 'nc', 'north dakota': 'nd', 'ohio': 'oh', 'oklahoma': 'ok',
+    'oregon': 'or', 'pennsylvania': 'pa', 'rhode island': 'ri', 'south carolina': 'sc',
+    'south dakota': 'sd', 'tennessee': 'tn', 'texas': 'tx', 'utah': 'ut',
+    'vermont': 'vt', 'virginia': 'va', 'washington': 'wa', 'west virginia': 'wv',
+    'wisconsin': 'wi', 'wyoming': 'wy'
+}
+ABBREV_TO_STATE = {v: k for k, v in STATE_ABBREV_MAP.items()}
+
 # ── PostgreSQL helpers ────────────────────────────────────────────────────────
 
 def get_db_connection():
@@ -173,27 +192,10 @@ def get_visitor_notes(api_name: str, city: str, state: str) -> str:
     State matching handles both full names (California) and abbreviations (CA).
     Fallback to CSV file if database is not available.
     """
-    # Map full state names to abbreviations
-    state_abbrev_map = {
-        'alabama': 'al', 'alaska': 'ak', 'arizona': 'az', 'arkansas': 'ar',
-        'california': 'ca', 'colorado': 'co', 'connecticut': 'ct', 'delaware': 'de',
-        'florida': 'fl', 'georgia': 'ga', 'hawaii': 'hi', 'idaho': 'id',
-        'illinois': 'il', 'indiana': 'in', 'iowa': 'ia', 'kansas': 'ks',
-        'kentucky': 'ky', 'louisiana': 'la', 'maine': 'me', 'maryland': 'md',
-        'massachusetts': 'ma', 'michigan': 'mi', 'minnesota': 'mn', 'mississippi': 'ms',
-        'missouri': 'mo', 'montana': 'mt', 'nebraska': 'ne', 'nevada': 'nv',
-        'new hampshire': 'nh', 'new jersey': 'nj', 'new mexico': 'nm', 'new york': 'ny',
-        'north carolina': 'nc', 'north dakota': 'nd', 'ohio': 'oh', 'oklahoma': 'ok',
-        'oregon': 'or', 'pennsylvania': 'pa', 'rhode island': 'ri', 'south carolina': 'sc',
-        'south dakota': 'sd', 'tennessee': 'tn', 'texas': 'tx', 'utah': 'ut',
-        'vermont': 'vt', 'virginia': 'va', 'washington': 'wa', 'west virginia': 'wv',
-        'wisconsin': 'wi', 'wyoming': 'wy'
-    }
-
     # Normalize state to 2-letter abbreviation
     state_lower = state.strip().lower()
-    if state_lower in state_abbrev_map:
-        state_normalized = state_abbrev_map[state_lower]
+    if state_lower in STATE_ABBREV_MAP:
+        state_normalized = STATE_ABBREV_MAP[state_lower]
     else:
         state_normalized = state_lower
 
@@ -270,13 +272,46 @@ def get_visitor_notes_from_csv(api_name: str, city: str, state: str) -> str:
 init_db()
 sync_brewery_csv()
 
+def parse_location_query(location):
+    """
+    Parse a user-typed location into OpenBreweryDB `by_city`/`by_state` filters.
+    Accepts "City, State" (e.g. "Chino, CA"), a bare state name/abbreviation
+    (e.g. "California"), or a bare city (e.g. "Chino"). The API's `by_state`
+    filter requires the full state name, so abbreviations are expanded.
+    """
+    location = location.strip()
+
+    def normalize_state(raw_state):
+        key = raw_state.strip().lower()
+        full_name = ABBREV_TO_STATE.get(key, key if key in STATE_ABBREV_MAP else key)
+        return full_name.replace(' ', '_')
+
+    if ',' in location:
+        city_part, state_part = location.split(',', 1)
+        params = {'by_city': city_part.strip().replace(' ', '_')}
+        if state_part.strip():
+            params['by_state'] = normalize_state(state_part)
+        return params
+
+    lowered = location.lower()
+    if lowered in STATE_ABBREV_MAP or lowered in ABBREV_TO_STATE:
+        return {'by_state': normalize_state(location)}
+
+    return {'by_city': location.replace(' ', '_')}
+
 def search_open_brewery_db(location):
     try:
-        # Increased per_page to 15 to ensure we find the most popular breweries
-        url = f"https://api.openbrewerydb.org/v1/breweries?by_city={location}&per_page=8"
-        response = requests.get(url)
+        params = parse_location_query(location)
+        params['by_country'] = 'united_states'
+        params['per_page'] = 8
+
+        url = "https://api.openbrewerydb.org/v1/breweries"
+        response = requests.get(url, params=params)
         response.raise_for_status()
-        return response.json()
+        results = response.json()
+
+        # Defensive filter in case the API's by_country match is inexact.
+        return [b for b in results if b.get('country') in (None, 'United States')]
     except Exception as e:
         logger.error(f"Open Brewery DB Error: {e}")
         return []
@@ -301,14 +336,18 @@ def get_gemini_structured_data(brewery_name, location, web_data):
         )
         
         prompt = f"""
-        Research the brewery '{brewery_name}' in '{location}'. 
+        Research the brewery '{brewery_name}' in '{location}'.
         Search Context: {json.dumps(web_data)}.
-        
+
         Using the search context AND your internal knowledge, return a JSON object with:
         - "description": A professional 2-sentence summary of the brewery.
         - "food_info": Details about on-site food or nearby food trucks.
-        - "top_beers": An array of 3 objects. Each MUST have "name", "abv", and "ibu". 
-        
+        - "top_beers": An array of 3 objects. Each MUST have "name", "abv", and "ibu".
+        - "status": One of "open", "temporarily_closed", or "permanently_closed" — the
+          brewery's current operating status, based only on clear evidence in the search
+          context (e.g. "permanently closed", "closed for good", "temporarily closed",
+          "closed until"). If there is no clear evidence of closure, use "open".
+
         If you cannot find specific ABV/IBU, provide your best estimate or "N/A".
         """
         response = model.generate_content(prompt)
@@ -332,10 +371,17 @@ def search_brewery():
         final_results = []
 
         for b in breweries:
-            web_info = google_web_search(f"{b['name']} {location} brewery beer list food")
+            web_info = google_web_search(
+                f"{b['name']} {location} brewery beer list food hours "
+                f"permanently closed temporarily closed"
+            )
             ai_data = get_gemini_structured_data(b['name'], location, web_info)
 
             if ai_data:
+                status = ai_data.get('status', 'open')
+                if status == 'permanently_closed':
+                    continue
+
                 final_results.append({
                     "name": b['name'],
                     "address": f"{b.get('street', 'Address not listed')}, {b.get('city', '')}, {b.get('state', '')}",
@@ -343,6 +389,7 @@ def search_brewery():
                     "food": ai_data.get('food_info', 'No food information available.'),
                     "beers": ai_data.get('top_beers', []),
                     "visitor_notes": get_visitor_notes(b['name'], b.get('city', ''), b.get('state', '')),
+                    "status": status,
                 })
 
         return jsonify({"results": final_results})

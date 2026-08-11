@@ -31,7 +31,7 @@
             justify-content: center;
             -webkit-font-smoothing: antialiased;
             line-height: 1.6;
-            font-size: 12px; 
+            font-size: 14px; 
         }
 
         .container {
@@ -45,7 +45,7 @@
 
         /* 1. TITLE */
         h1 {
-            font-size: 12px; 
+            font-size: 14px; 
             color: var(--accent);
             text-transform: uppercase;
             letter-spacing: 4px;
@@ -72,7 +72,7 @@
         /* 3. SUBTITLE */
         .subtitle {
             color: var(--text-sub);
-            font-size: 12px;
+            font-size: 14px;
             margin-bottom: 30px;
             letter-spacing: 1px;
             text-transform: uppercase;
@@ -97,7 +97,7 @@
             border: none;
             background: var(--input-bg);
             color: var(--input-text);
-            font-size: 12px;
+            font-size: 14px;
             outline: none;
             min-width: 0;
         }
@@ -109,7 +109,7 @@
             color: #000;
             font-weight: 700;
             cursor: pointer;
-            font-size: 12px;
+            font-size: 14px;
             text-transform: uppercase;
             transition: all 0.3s ease;
             white-space: nowrap;
@@ -139,7 +139,7 @@
         }
 
         .brewery-name {
-            font-size: 12px;
+            font-size: 14px;
             color: var(--accent);
             margin: 0;
             font-weight: 800;
@@ -148,17 +148,25 @@
         }
 
         .brewery-address {
-            font-size: 12px;
+            font-size: 14px;
             color: var(--text-muted);
             margin-top: 5px;
             font-style: italic;
+        }
+
+        .closed-badge {
+            color: #ff4d4d;
+            font-weight: 700;
+            text-transform: none;
+            letter-spacing: normal;
+            margin-left: 8px;
         }
 
         .info-text {
             line-height: 1.6;
             margin-bottom: 15px;
             color: var(--text-main);
-            font-size: 12px;
+            font-size: 14px;
         }
 
         .food-badge {
@@ -167,7 +175,7 @@
             color: var(--accent);
             padding: 5px 12px;
             border-radius: 50px;
-            font-size: 12px;
+            font-size: 14px;
             border: 1px solid var(--border-gold);
             margin-bottom: 20px;
             font-weight: 600;
@@ -193,7 +201,7 @@
             color: var(--accent);
             text-align: left;
             padding: 10px;
-            font-size: 12px;
+            font-size: 14px;
             text-transform: uppercase;
             letter-spacing: 1px;
         }
@@ -202,7 +210,7 @@
             padding: 10px;
             border-bottom: 1px solid var(--bg-card-low);
             color: var(--text-main);
-            font-size: 12px;
+            font-size: 14px;
         }
 
         /* FOOTER STYLES */
@@ -210,7 +218,7 @@
             margin-top: auto; /* Pushes footer to the bottom */
             padding: 40px 0 20px 0;
             color: var(--text-muted);
-            font-size: 12px;
+            font-size: 14px;
             text-align: center;
             border-top: 1px solid rgba(255, 209, 101, 0.1);
             width: 100%;
@@ -255,7 +263,7 @@
             background: linear-gradient(90deg, #ffd165 0%, rgba(255, 209, 101, 0.15) 100%);
         }
         .visitor-opinion-title {
-            font-size: 10px;
+            font-size: 12px;
             font-weight: 700;
             color: var(--accent);
             text-transform: uppercase;
@@ -264,7 +272,7 @@
         }
         .visitor-opinion-text {
             color: var(--text-sub);
-            font-size: 12px;
+            font-size: 14px;
             line-height: 1.7;
         }
         .visitor-opinion-text a {
@@ -293,11 +301,11 @@
         <div class="subtitle">Curated Craft Brewery Intelligence</div>
         
         <div class="search-box">
-            <input type="text" id="locationInput" placeholder="Search by city (e.g. Torrance)...">
-            <button onclick="performSearch()">Find Beer</button>
+            <input type="text" id="locationInput" placeholder="City, or city, state (e.g. Chino, CA or California)" onkeydown="if (event.key === 'Enter') { event.preventDefault(); performSearch(); }">
+            <button onclick="performSearch()">Find a Brewery</button>
         </div>
 
-        <div id="loading" style="display:none; color:var(--accent); margin-bottom:20px; font-weight: 600; letter-spacing: 1px; font-size: 12px;">Scanning Premium Database...</div>
+        <div id="loading" style="display:none; color:var(--accent); margin-bottom:20px; font-weight: 600; letter-spacing: 1px; font-size: 14px;">Scanning Premium Database...</div>
         <div id="results"></div>
 
         <!-- FOOTNOTE SECTION -->
@@ -324,7 +332,7 @@
                 const data = await response.json();
 
                 if (!data.results || data.results.length === 0) {
-                    document.getElementById('results').innerHTML = '<p style="color:var(--text-muted); font-size:12px;">No premium breweries found in this area.</p>';
+                    document.getElementById('results').innerHTML = '<p style="color:var(--text-muted); font-size:14px;">No premium breweries found in this area.</p>';
                 } else {
                     data.results.forEach(b => {
                         const card = document.createElement('div');
@@ -346,7 +354,7 @@
                                     </table>
                                 </div>`;
                         } else {
-                            beerContent = `<p style="text-align:center; color:var(--text-muted); font-style:italic; margin-top:15px; font-size:12px;">Beer list currently unavailable.</p>`;
+                            beerContent = `<p style="text-align:center; color:var(--text-muted); font-style:italic; margin-top:15px; font-size:14px;">Beer list currently unavailable.</p>`;
                         }
 
                         const visitorBlock = b.visitor_notes ? `
@@ -355,9 +363,12 @@
                                 <div class="visitor-opinion-text">${linkifyText(b.visitor_notes)}</div>
                             </div>` : '';
 
+                        const closedBadge = b.status === 'temporarily_closed'
+                            ? '<span class="closed-badge">Temporarily Closed</span>' : '';
+
                         card.innerHTML = `
                             <div class="brewery-header">
-                                <div class="brewery-name">${b.name}</div>
+                                <div class="brewery-name">${b.name}${closedBadge}</div>
                                 <div class="brewery-address">${b.address}</div>
                             </div>
                             <div class="info-text">${b.description}</div>
