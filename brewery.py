@@ -18,6 +18,7 @@ load_dotenv()
 GEMINI_API_KEY           = os.getenv("GEMINI_API_KEY")
 GOOGLE_CSE_API_KEY       = os.getenv("GOOGLE_CSE_API_KEY")
 GOOGLE_CSE_CX            = os.getenv("GOOGLE_CSE_CX")
+GOOGLE_PLACES_API_KEY    = os.getenv("GOOGLE_PLACES_API_KEY")
 DATABASE_URL             = os.getenv("DATABASE_URL")
 BREWERY_CSV_PATH         = os.path.join(os.path.dirname(__file__), "brewery.csv")
 
@@ -328,6 +329,45 @@ def google_web_search(query):
         logger.error(f"Google Search Error: {e}")
         return []
 
+PLACES_STATUS_MAP = {
+    'OPERATIONAL': 'open',
+    'CLOSED_TEMPORARILY': 'temporarily_closed',
+    'CLOSED_PERMANENTLY': 'permanently_closed',
+}
+
+def get_business_status(name, city, state):
+    """
+    Look up a brewery's live operating status via the Google Places "Find Place
+    From Text" endpoint, which reports business_status (OPERATIONAL,
+    CLOSED_TEMPORARILY, CLOSED_PERMANENTLY) straight from Google Maps data.
+    OpenBreweryDB has no such field and is frequently stale, so this is the
+    source of truth for closures. Defaults to "open" if the key is missing,
+    the place can't be matched, or the lookup fails.
+    """
+    if not GOOGLE_PLACES_API_KEY:
+        return 'open'
+
+    try:
+        url = "https://maps.googleapis.com/maps/api/place/findplacefromtext/json"
+        params = {
+            'input': f"{name} {city} {state}",
+            'inputtype': 'textquery',
+            'fields': 'business_status',
+            'key': GOOGLE_PLACES_API_KEY,
+        }
+        response = requests.get(url, params=params)
+        response.raise_for_status()
+        data = response.json()
+        candidates = data.get('candidates', [])
+        if not candidates:
+            return 'open'
+
+        business_status = candidates[0].get('business_status', 'OPERATIONAL')
+        return PLACES_STATUS_MAP.get(business_status, 'open')
+    except Exception as e:
+        logger.error(f"Google Places Error: {e}")
+        return 'open'
+
 def get_gemini_structured_data(brewery_name, location, web_data):
     try:
         model = genai.GenerativeModel(
@@ -343,10 +383,6 @@ def get_gemini_structured_data(brewery_name, location, web_data):
         - "description": A professional 2-sentence summary of the brewery.
         - "food_info": Details about on-site food or nearby food trucks.
         - "top_beers": An array of 3 objects. Each MUST have "name", "abv", and "ibu".
-        - "status": One of "open", "temporarily_closed", or "permanently_closed" — the
-          brewery's current operating status, based only on clear evidence in the search
-          context (e.g. "permanently closed", "closed for good", "temporarily closed",
-          "closed until"). If there is no clear evidence of closure, use "open".
 
         If you cannot find specific ABV/IBU, provide your best estimate or "N/A".
         """
@@ -371,17 +407,14 @@ def search_brewery():
         final_results = []
 
         for b in breweries:
-            web_info = google_web_search(
-                f"{b['name']} {location} brewery beer list food hours "
-                f"permanently closed temporarily closed"
-            )
+            status = get_business_status(b['name'], b.get('city', ''), b.get('state', ''))
+            if status == 'permanently_closed':
+                continue
+
+            web_info = google_web_search(f"{b['name']} {location} brewery beer list food")
             ai_data = get_gemini_structured_data(b['name'], location, web_info)
 
             if ai_data:
-                status = ai_data.get('status', 'open')
-                if status == 'permanently_closed':
-                    continue
-
                 final_results.append({
                     "name": b['name'],
                     "address": f"{b.get('street', 'Address not listed')}, {b.get('city', '')}, {b.get('state', '')}",
