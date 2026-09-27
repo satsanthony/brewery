@@ -451,9 +451,10 @@ def search_open_brewery_db(location):
     try:
         params = parse_location_query(location)
         params['by_country'] = 'united_states'
-        # 200 is OpenBreweryDB's max per_page - use it so results for a city
-        # aren't artificially truncated.
-        params['per_page'] = 200
+        # Each result triggers a Google search + Gemini call below, so a big
+        # per_page (e.g. San Diego/LA's 90+ breweries) makes the request slow
+        # enough to time out and come back with nothing. Cap it at 15.
+        params['per_page'] = 15
 
         url = "https://api.openbrewerydb.org/v1/breweries"
         response = requests.get(url, params=params)
