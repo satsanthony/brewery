@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 # Configure Gemini
 genai.configure(api_key=GEMINI_API_KEY)
-SELECTED_MODEL = 'gemini-3.1-flash-lite-preview'
+SELECTED_MODEL = 'gemini-3.5-flash-lite'
 
 # In-memory cache for CSV brewery data
 _brewery_csv_cache = {}
