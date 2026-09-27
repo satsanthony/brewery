@@ -86,6 +86,29 @@ def init_db():
                 notes TEXT
             )
         """)
+
+        # Add the address column for pre-existing tables that predate it.
+        cur.execute("ALTER TABLE brewery_info ADD COLUMN IF NOT EXISTS address TEXT")
+
+        # Collapse any duplicate rows (same name/city/state) left over from the
+        # old delete-all-then-reinsert sync, keeping the earliest row's id, so a
+        # unique index can be created on that triple.
+        cur.execute("""
+            DELETE FROM brewery_info a
+            USING brewery_info b
+            WHERE a.id > b.id
+              AND LOWER(a.name) = LOWER(b.name)
+              AND LOWER(a.city) = LOWER(b.city)
+              AND LOWER(a.state) = LOWER(b.state)
+        """)
+
+        # Unique index used as the upsert conflict target in sync_brewery_csv,
+        # which also guarantees duplicates can't reappear even if the sync runs
+        # concurrently from multiple workers.
+        cur.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS brewery_info_name_city_state_idx
+            ON brewery_info (LOWER(name), LOWER(city), LOWER(state))
+        """)
         logger.info("brewery_info table created/verified")
 
         # Create csv_meta table
@@ -152,18 +175,43 @@ def sync_brewery_csv():
         rows = [r for r in reader if r.get("Name of Brewery", "").strip()]
         logger.info(f"CSV has {len(rows)} brewery entries")
 
-        # Clear and reload
-        cur.execute("DELETE FROM brewery_info")
-        logger.info("Cleared brewery_info table")
-
+        # Upsert each row instead of wiping the table first. This keeps existing
+        # ids stable, only writes net-new/changed data, and - combined with the
+        # unique index from init_db - can't produce duplicates even if two
+        # workers run this at the same time (the old DELETE-then-INSERT could
+        # race and double-insert rows).
         for r in rows:
-            cur.execute(
-                "INSERT INTO brewery_info (name, city, state, notes) VALUES (%s, %s, %s, %s)",
-                (r.get("Name of Brewery", "").strip(),
-                 r.get("City", "").strip(),
-                 r.get("State", "").strip(),
-                 r.get("My notes", "").strip()),
-            )
+            cur.execute("""
+                INSERT INTO brewery_info (name, city, state, notes, address)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (LOWER(name), LOWER(city), LOWER(state))
+                DO UPDATE SET
+                    name    = EXCLUDED.name,
+                    city    = EXCLUDED.city,
+                    state   = EXCLUDED.state,
+                    notes   = EXCLUDED.notes,
+                    address = COALESCE(NULLIF(EXCLUDED.address, ''), brewery_info.address)
+            """, (r.get("Name of Brewery", "").strip(),
+                  r.get("City", "").strip(),
+                  r.get("State", "").strip(),
+                  r.get("My notes", "").strip(),
+                  r.get("Address", "").strip()))
+
+        # Remove rows for breweries no longer in the CSV.
+        cur.execute("SELECT id, name, city, state FROM brewery_info")
+        csv_keys = {
+            (r.get("Name of Brewery", "").strip().lower(),
+             r.get("City", "").strip().lower(),
+             r.get("State", "").strip().lower())
+            for r in rows
+        }
+        stale_ids = [
+            row_id for row_id, name, city, state in cur.fetchall()
+            if (name.lower(), city.lower(), state.lower()) not in csv_keys
+        ]
+        if stale_ids:
+            cur.execute("DELETE FROM brewery_info WHERE id = ANY(%s)", (stale_ids,))
+            logger.info(f"Removed {len(stale_ids)} brewery rows no longer in CSV")
 
         # Update hash
         cur.execute("""
@@ -185,13 +233,14 @@ def sync_brewery_csv():
     finally:
         conn.close()
 
-def get_visitor_notes(api_name: str, city: str, state: str) -> str:
+def get_brewery_extra_info(api_name: str, city: str, state: str) -> dict:
     """
-    Return the notes for a brewery if name + city + state match a brewery_info row.
-    Name matching is case-insensitive and checks whether one name contains the other,
-    handling minor differences between the CSV and OpenBreweryDB naming.
-    State matching handles both full names (California) and abbreviations (CA).
-    Fallback to CSV file if database is not available.
+    Return {"notes": ..., "address": ...} for a brewery if name + city + state
+    match a brewery_info row. Name matching is case-insensitive and checks
+    whether one name contains the other, handling minor differences between
+    the CSV and OpenBreweryDB naming. State matching handles both full names
+    (California) and abbreviations (CA). Falls back to the CSV file if the
+    database is not available.
     """
     # Normalize state to 2-letter abbreviation
     state_lower = state.strip().lower()
@@ -206,7 +255,7 @@ def get_visitor_notes(api_name: str, city: str, state: str) -> str:
             cur = conn.cursor(cursor_factory=RealDictCursor)
             # Query with both exact match and abbreviation match
             cur.execute("""
-                SELECT name, notes FROM brewery_info
+                SELECT name, notes, address FROM brewery_info
                 WHERE LOWER(city)=%s AND (LOWER(state)=%s OR LOWER(state)=%s)
             """,
                 (city.strip().lower(), state_normalized, state_lower),
@@ -216,23 +265,23 @@ def get_visitor_notes(api_name: str, city: str, state: str) -> str:
             for row in candidates:
                 db_lower = row["name"].lower().strip()
                 if db_lower in api_lower or api_lower in db_lower:
-                    return row["notes"] or ""
+                    return {"notes": row["notes"] or "", "address": row["address"] or ""}
             cur.close()
-            return ""
+            return {"notes": "", "address": ""}
         except Exception as e:
-            logger.error(f"get_visitor_notes DB error: {e}")
+            logger.error(f"get_brewery_extra_info DB error: {e}")
         finally:
             conn.close()
 
-    return get_visitor_notes_from_csv(api_name, city, state)
+    return get_brewery_extra_info_from_csv(api_name, city, state)
 
-def get_visitor_notes_from_csv(api_name: str, city: str, state: str) -> str:
-    """Fallback method to read visitor notes directly from CSV file."""
+def get_brewery_extra_info_from_csv(api_name: str, city: str, state: str) -> dict:
+    """Fallback method to read visitor notes/address directly from CSV file."""
     global _brewery_csv_cache, _csv_cache_hash
 
     try:
         if not os.path.exists(BREWERY_CSV_PATH):
-            return ""
+            return {"notes": "", "address": ""}
 
         try:
             with open(BREWERY_CSV_PATH, 'r', encoding='utf-8') as f:
@@ -262,12 +311,102 @@ def get_visitor_notes_from_csv(api_name: str, city: str, state: str) -> str:
         for row in _brewery_csv_cache.get(key, []):
             db_name = row.get("Name of Brewery", "").strip()
             if db_name.lower() in api_lower or api_lower in db_name.lower():
-                return row.get("My notes", "").strip()
+                return {
+                    "notes": row.get("My notes", "").strip(),
+                    "address": row.get("Address", "").strip(),
+                }
 
-        return ""
+        return {"notes": "", "address": ""}
     except Exception as e:
-        logger.error(f"get_visitor_notes_from_csv error: {e}")
-        return ""
+        logger.error(f"get_brewery_extra_info_from_csv error: {e}")
+        return {"notes": "", "address": ""}
+
+def get_csv_rows_for_location(location: str) -> list:
+    """
+    Return raw CSV rows whose City/State match the parsed location filters,
+    used to surface breweries that have visitor notes but no OpenBreweryDB
+    record (e.g. Malibu Brewing Co).
+    """
+    try:
+        if not os.path.exists(BREWERY_CSV_PATH):
+            return []
+
+        try:
+            with open(BREWERY_CSV_PATH, 'r', encoding='utf-8') as f:
+                content = f.read()
+        except UnicodeDecodeError:
+            with open(BREWERY_CSV_PATH, 'r', encoding='latin-1') as f:
+                content = f.read()
+
+        params = parse_location_query(location)
+        target_city = params.get('by_city', '').replace('_', ' ').strip().lower()
+        target_state_raw = params.get('by_state', '').replace('_', ' ').strip().lower()
+        target_state = STATE_ABBREV_MAP.get(target_state_raw, target_state_raw)
+
+        matches = []
+        reader = csv.DictReader(io.StringIO(content))
+        for row in reader:
+            name = row.get("Name of Brewery", "").strip()
+            if not name:
+                continue
+            row_city = row.get("City", "").strip().lower()
+            row_state_raw = row.get("State", "").strip().lower()
+            row_state = STATE_ABBREV_MAP.get(row_state_raw, row_state_raw)
+
+            if target_city and row_city != target_city:
+                continue
+            if target_state and row_state != target_state:
+                continue
+            matches.append(row)
+
+        return matches
+    except Exception as e:
+        logger.error(f"get_csv_rows_for_location error: {e}")
+        return []
+
+# Beer menus for breweries that have no OpenBreweryDB record, keyed by the
+# brewery's exact name as it appears in brewery.csv (lowercased). Populate
+# manually from the brewery's own menu when OpenBreweryDB has no listing.
+LOCAL_ONLY_BEER_MENUS = {
+    "malibu brewing co": [
+        {"name": "Sand & Sea — Mexican-Style Lager", "abv": "4.4%", "ibu": "N/A"},
+        {"name": "Pacific Gold — Pilsner", "abv": "4.8%", "ibu": "N/A"},
+        {"name": "Happy Days — Honey Blonde Ale", "abv": "5.2%", "ibu": "N/A"},
+        {"name": "Lineup — Pale Ale", "abv": "5.9%", "ibu": "N/A"},
+        {"name": "Wild Grove — Hazy IPA", "abv": "6.0%", "ibu": "N/A"},
+        {"name": "First Point — American IPA", "abv": "6.9%", "ibu": "N/A"},
+        {"name": "Ladyface — West Coast IPA", "abv": "7.2%", "ibu": "N/A"},
+        {"name": "Party Wave — Hoppy Lager", "abv": "7.4%", "ibu": "N/A"},
+        {"name": "Tower 17 — Hazy Double IPA", "abv": "8.2%", "ibu": "N/A"},
+        {"name": "Oktoberfest — Bavarian-Style Festbier", "abv": "5.9%", "ibu": "N/A"},
+        {"name": "Thank You, Fritz — California Common", "abv": "5.2%", "ibu": "N/A"},
+        {"name": "Big Rock — Amber Lager", "abv": "5.9%", "ibu": "N/A"},
+        {"name": "Overly Ambitious — Belgian Dark Strong", "abv": "9.9%", "ibu": "N/A"},
+        {"name": "Undertow — Dry Stout", "abv": "4.7%", "ibu": "N/A"},
+        {"name": "Canyon — Rosé Lager", "abv": "4.2%", "ibu": "N/A"},
+        {"name": "Westward — Berliner Weisse", "abv": "3.7%", "ibu": "N/A"},
+        {"name": "Hatch — Green Chile Lager", "abv": "4.4%", "ibu": "N/A"},
+        {"name": "Zuma — Agave Hard Seltzer", "abv": "5.1%", "ibu": "N/A"},
+        {"name": "Mali-Bougie — Hard Cider (Balcom Canyon Cidery collab)", "abv": "6.3%", "ibu": "N/A"},
+    ],
+}
+
+def get_local_only_breweries(location: str, existing_names: list) -> list:
+    """
+    Return CSV-only breweries for this location that have no OpenBreweryDB
+    record (so they were not already found by search_open_brewery_db).
+    """
+    existing_lower = [n.lower().strip() for n in existing_names]
+    local_only = []
+
+    for row in get_csv_rows_for_location(location):
+        name = row.get("Name of Brewery", "").strip()
+        name_lower = name.lower()
+        if any(name_lower in n or n in name_lower for n in existing_lower):
+            continue
+        local_only.append(row)
+
+    return local_only
 
 # ── Startup ───────────────────────────────────────────────────────────────────
 init_db()
@@ -413,17 +552,48 @@ def search_brewery():
 
             web_info = google_web_search(f"{b['name']} {location} brewery beer list food")
             ai_data = get_gemini_structured_data(b['name'], location, web_info)
+            extra = get_brewery_extra_info(b['name'], b.get('city', ''), b.get('state', ''))
+            # Prefer the visitor-verified address from the CSV; fall back to
+            # OpenBreweryDB's street address when the CSV has none on file.
+            address = extra["address"] or f"{b.get('street', 'Address not listed')}, {b.get('city', '')}, {b.get('state', '')}"
 
             if ai_data:
                 final_results.append({
                     "name": b['name'],
-                    "address": f"{b.get('street', 'Address not listed')}, {b.get('city', '')}, {b.get('state', '')}",
+                    "address": address,
                     "description": ai_data.get('description', 'No description available.'),
                     "food": ai_data.get('food_info', 'No food information available.'),
                     "beers": ai_data.get('top_beers', []),
-                    "visitor_notes": get_visitor_notes(b['name'], b.get('city', ''), b.get('state', '')),
+                    "visitor_notes": extra["notes"],
                     "status": status,
                 })
+
+        # Breweries with visitor notes in the CSV but no OpenBreweryDB record
+        # (e.g. Malibu Brewing Co) don't show up in the loop above at all, so
+        # surface them directly from the CSV instead.
+        seen_names = [r['name'] for r in final_results]
+        for row in get_local_only_breweries(location, seen_names):
+            name = row.get("Name of Brewery", "").strip()
+            city = row.get("City", "").strip()
+            state = row.get("State", "").strip()
+            notes = row.get("My notes", "").strip()
+            address = row.get("Address", "").strip() or f"{city}, {state}"
+
+            status = get_business_status(name, city, state)
+            if status == 'permanently_closed':
+                continue
+
+            final_results.append({
+                "name": name,
+                "address": address,
+                # No OpenBreweryDB/AI data exists for this brewery, so the
+                # visitor's own notes stand in as the description.
+                "description": notes or "No description available.",
+                "food": "No food information available.",
+                "beers": LOCAL_ONLY_BEER_MENUS.get(name.lower(), []),
+                "visitor_notes": "",
+                "status": status,
+            })
 
         return jsonify({"results": final_results})
     except Exception:
@@ -474,13 +644,15 @@ def debug_visitor_notes():
     city = request.args.get('city', 'Mammoth Lakes')
     state = request.args.get('state', 'California')
 
-    notes = get_visitor_notes(brewery_name, city, state)
+    extra = get_brewery_extra_info(brewery_name, city, state)
+    notes = extra["notes"]
 
     return jsonify({
         "brewery_name": brewery_name,
         "city": city,
         "state": state,
         "visitor_notes": notes,
+        "address": extra["address"],
         "has_notes": bool(notes and len(notes.strip()) > 0)
     }), 200
 

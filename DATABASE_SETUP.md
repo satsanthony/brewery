@@ -137,7 +137,7 @@ Configure it to use the same DATABASE_URL. The sync process depends on your guil
 
 **Solution:**
 1. Verify CSV file exists and is readable
-2. Check CSV format: Name of Brewery, City, State, My notes
+2. Check CSV format: Name of Brewery, City, State, My notes, Address
 3. Trigger manual sync: `POST /sync_csv`
 4. Check logs for sync errors
 
@@ -150,9 +150,14 @@ CREATE TABLE brewery_info (
   name TEXT NOT NULL,
   city TEXT NOT NULL,
   state TEXT NOT NULL,
-  notes TEXT
+  notes TEXT,
+  address TEXT
 );
+CREATE UNIQUE INDEX brewery_info_name_city_state_idx
+  ON brewery_info (LOWER(name), LOWER(city), LOWER(state));
 ```
+The unique index is the upsert conflict target `sync_brewery_csv` uses when
+re-syncing `brewery.csv`, so re-syncing never creates duplicate rows.
 
 ### csv_meta Table
 ```sql
