@@ -340,15 +340,20 @@
 
                         let beerContent = '';
                         if (b.beers && b.beers.length > 0) {
+                            const hasIbu = beer => beer.ibu && String(beer.ibu).trim().toUpperCase() !== 'N/A';
+                            const showIbu = b.beers.some(hasIbu);
+
                             let beerRows = b.beers.map(beer =>
-                                `<tr><td>${beer.name}</td><td>${beer.abv}</td><td>${beer.ibu}</td></tr>`
+                                showIbu
+                                    ? `<tr><td>${beer.name}</td><td>${beer.abv}</td><td>${beer.ibu}</td></tr>`
+                                    : `<tr><td>${beer.name}</td><td>${beer.abv}</td></tr>`
                             ).join('');
 
                             beerContent = `
                                 <div class="table-container">
                                     <table>
                                         <thead>
-                                            <tr><th>Selection</th><th>ABV</th><th>IBU</th></tr>
+                                            <tr><th>Selection</th><th>ABV</th>${showIbu ? '<th>IBU</th>' : ''}</tr>
                                         </thead>
                                         <tbody>${beerRows}</tbody>
                                     </table>

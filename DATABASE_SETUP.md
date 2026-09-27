@@ -137,7 +137,7 @@ Configure it to use the same DATABASE_URL. The sync process depends on your guil
 
 **Solution:**
 1. Verify CSV file exists and is readable
-2. Check CSV format: Name of Brewery, City, State, My notes, Address
+2. Check CSV format: Name of Brewery, City, State, My notes, Address, Gastronomy
 3. Trigger manual sync: `POST /sync_csv`
 4. Check logs for sync errors
 
@@ -151,7 +151,8 @@ CREATE TABLE brewery_info (
   city TEXT NOT NULL,
   state TEXT NOT NULL,
   notes TEXT,
-  address TEXT
+  address TEXT,
+  gastronomy TEXT
 );
 CREATE UNIQUE INDEX brewery_info_name_city_state_idx
   ON brewery_info (LOWER(name), LOWER(city), LOWER(state));
