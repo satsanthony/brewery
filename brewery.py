@@ -520,7 +520,7 @@ def get_gemini_structured_data(brewery_name, location, web_data):
 
         Using the search context AND your internal knowledge, return a JSON object with:
         - "description": A professional 2-sentence summary of the brewery.
-        - "food_info": Details about on-site food or nearby food trucks.
+        - "food_info": Details about on-site food or nearby food trucks, no more than 3 lines.
         - "top_beers": An array of 3 objects. Each MUST have "name", "abv", and "ibu".
 
         If you cannot find specific ABV/IBU, provide your best estimate or "N/A".
@@ -530,6 +530,36 @@ def get_gemini_structured_data(brewery_name, location, web_data):
     except Exception as e:
         logger.error(f"Gemini Error: {e}")
         return None
+
+def get_food_info(brewery_name, city, state):
+    """
+    Look up food/food-truck info for a brewery via Google search, summarized
+    to at most 3 lines by Gemini. Used for CSV-only breweries that have no
+    OpenBreweryDB/AI record to source "food_info" from.
+    """
+    try:
+        web_data = google_web_search(f"{brewery_name} {city} {state} brewery food menu food truck")
+        if not web_data:
+            return "No food information available."
+
+        model = genai.GenerativeModel(
+            model_name=SELECTED_MODEL,
+            generation_config={"response_mime_type": "application/json"}
+        )
+        prompt = f"""
+        Search Context about food at the brewery '{brewery_name}' in '{city}, {state}':
+        {json.dumps(web_data)}
+
+        Return a JSON object with one field:
+        - "food_info": A summary of on-site food or nearby food trucks, no more than 3 lines.
+          If the search context has no food information, set this to "No food information available."
+        """
+        response = model.generate_content(prompt)
+        data = json.loads(response.text)
+        return data.get("food_info") or "No food information available."
+    except Exception as e:
+        logger.error(f"get_food_info error: {e}")
+        return "No food information available."
 
 @app.route('/')
 def index():
@@ -589,7 +619,7 @@ def search_brewery():
                 # No OpenBreweryDB/AI data exists for this brewery, so the
                 # visitor's own notes stand in as the description.
                 "description": notes or "No description available.",
-                "food": "No food information available.",
+                "food": get_food_info(name, city, state),
                 "beers": LOCAL_ONLY_BEER_MENUS.get(name.lower(), []),
                 "visitor_notes": "",
                 "status": status,

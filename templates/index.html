@@ -371,8 +371,8 @@
                                 <div class="brewery-name">${b.name}${closedBadge}</div>
                                 <div class="brewery-address">${b.address}</div>
                             </div>
-                            <div class="info-text">${b.description}</div>
-                            <div class="food-badge">🍔 Gastronomy: ${b.food}</div>
+                            <div class="info-text">${linkifyText(b.description)}</div>
+                            <div class="food-badge">🍔 Gastronomy: ${linkifyText(b.food)}</div>
                             ${beerContent}
                             ${visitorBlock}
                         `;
